@@ -138,7 +138,7 @@ def handle_client(conn: socket.socket, addr, cache: LRUCache):
                     resp = handle_request(msg, cache)
                     out = (json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8")
                     conn.sendall(out)
-                    # break
+                    #break (מוחק את זה)
         except Exception as e:
             try:
                 conn.sendall((json.dumps({"ok": False, "error": f"Malformed: {e}"} ) + "\n").encode("utf-8"))
