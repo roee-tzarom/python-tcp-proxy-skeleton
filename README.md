@@ -36,3 +36,26 @@ Run `python client.py --interactive` for the menu. `--no-cache` disables the ser
 ```
 
 The response includes `ok`, `result` and cache/timing metadata. This is a local networking exercise, not a production gateway: caches are process-local, the server cache is not locked across request threads, and the proxy handles JSON-line traffic rather than arbitrary TCP streams.
+
+
+## Request path and safety choices
+
+The client sends one JSON object per line to a TCP endpoint. `server.py` handles connections with threads, decodes the request and dispatches by mode. For calculator requests, it parses an expression with Python's `ast` module and evaluates only a permitted subset of nodes, operators, functions and constants. It does not pass untrusted input to Python `eval`. The server's in-memory LRU cache can reuse calculator results. The proxy forwards the same JSON-line protocol and optionally serves a result from its own lock-protected cache until the 30-second TTL expires.
+
+```text
+client.py  →  proxy.py (optional TTL cache)  →  server.py (AST calculator)
+                JSON line over TCP                JSON response
+```
+
+The two caches are distinct: disabling the server cache with a client option does not automatically bypass a separately running proxy cache. `tests/test_smoke.py` checks a small calculator/cache path, and the interactive client is useful for manual requests.
+
+## Repository map and limitations
+
+| File | What to inspect |
+| --- | --- |
+| `server.py` | AST whitelist, request dispatch and LRU storage |
+| `proxy.py` | Request forwarding, cache keying, TTL and locking |
+| `client.py` | One-shot flags and interactive menu |
+| `tests/test_smoke.py` | Runnable behavior checks |
+
+The `gpt` branch is a placeholder response, even though the repository has optional dependency names. There is no live model call. The server cache is not synchronized across worker threads, and the wire format is a line-oriented lab protocol rather than an arbitrary-stream or hardened internet-facing proxy.
