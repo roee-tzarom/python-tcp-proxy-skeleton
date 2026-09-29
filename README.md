@@ -1,61 +1,58 @@
 # JSON over TCP: Calculator and Caching Proxy
 
-A Python socket lab with a threaded server, a command-line client and a caching proxy. Requests and responses use newline-delimited JSON. The working calculator evaluates a restricted mathematical expression tree without `eval`.
+A small Python network service with three independently runnable pieces: a command-line client, a threaded calculator server and an optional caching proxy. Messages are newline-delimited JSON, so request and response boundaries remain visible when using a TCP byte stream.
 
-## What is implemented
+## Request path
 
-- `server.py`: `ast`-based calculator with selected operators, functions and constants; per-request cache option; in-memory LRU cache.
-- `proxy.py`: JSON-line forwarding plus a separate lock-protected response cache with a 30-second TTL.
-- `client.py`: one-shot requests and an interactive menu.
-- `tests/test_smoke.py`: a small calculator/cache smoke test.
+```text
+client.py ── JSON line ──> proxy.py ── JSON line ──> server.py
+                              │                        │
+                       30-second response cache   AST calculator
+                                                   + LRU cache
+```
 
-The `gpt` mode is a **stub** that returns a placeholder string. Installing the optional packages in `requirements.txt` or setting an API key does not turn it into a real AI integration.
+A client can connect directly to the server or through the proxy. The server parses calculator expressions with Python's `ast` module and evaluates only the supported numeric nodes, operators, functions and constants. It does not call Python `eval`. The server keeps an in-memory LRU result cache; the proxy has a separate, lock-protected response cache with a 30-second time to live.
 
 ## Run locally
 
-Python 3 is required. The calculator and proxy use the standard library.
+The calculator path uses the Python 3 standard library. Start the server in one terminal:
 
 ```bash
-# Terminal 1
 python server.py --host 127.0.0.1 --port 5555
+```
 
-# Terminal 2
+Then make a direct request in another:
+
+```bash
 python client.py --mode calc --expr "sqrt(16)+2*3"
+```
 
-# Optional terminal 3: proxy
+To include the proxy, start it in a third terminal and point the client at port 5554:
+
+```bash
 python proxy.py --listen-port 5554 --server-port 5555
 python client.py --host 127.0.0.1 --port 5554 --mode calc --expr "1+2*3"
 ```
 
-Run `python client.py --interactive` for the menu. `--no-cache` disables the server cache for a one-shot request; the proxy has its own cache.
+`python client.py --interactive` opens a menu. The included smoke check uses pytest-style functions; with `pytest` installed, run `python -m pytest tests/test_smoke.py`.
 
-## Protocol example
+## Wire format
+
+A calculator request is one JSON object followed by a newline:
 
 ```json
 {"mode":"calc","data":{"expr":"sqrt(16)+2*3"},"options":{"cache":true}}
 ```
 
-The response includes `ok`, `result` and cache/timing metadata. This is a local networking exercise, not a production gateway: caches are process-local, the server cache is not locked across request threads, and the proxy handles JSON-line traffic rather than arbitrary TCP streams.
+Responses contain `ok`, either `result` or `error`, and timing/cache metadata for successful requests. The calculator supports arithmetic and selected functions such as `sqrt`, `sin` and `max`. Unsupported syntax produces an error response.
 
+## Code map and behavior
 
-## Request path and safety choices
-
-The client sends one JSON object per line to a TCP endpoint. `server.py` handles connections with threads, decodes the request and dispatches by mode. For calculator requests, it parses an expression with Python's `ast` module and evaluates only a permitted subset of nodes, operators, functions and constants. It does not pass untrusted input to Python `eval`. The server's in-memory LRU cache can reuse calculator results. The proxy forwards the same JSON-line protocol and optionally serves a result from its own lock-protected cache until the 30-second TTL expires.
-
-```text
-client.py  →  proxy.py (optional TTL cache)  →  server.py (AST calculator)
-                JSON line over TCP                JSON response
-```
-
-The two caches are distinct: disabling the server cache with a client option does not automatically bypass a separately running proxy cache. `tests/test_smoke.py` checks a small calculator/cache path, and the interactive client is useful for manual requests.
-
-## Repository map and limitations
-
-| File | What to inspect |
+| File | Responsibility |
 | --- | --- |
-| `server.py` | AST whitelist, request dispatch and LRU storage |
-| `proxy.py` | Request forwarding, cache keying, TTL and locking |
-| `client.py` | One-shot flags and interactive menu |
-| `tests/test_smoke.py` | Runnable behavior checks |
+| `server.py` | Restricted AST evaluation, JSON request dispatch, threaded connections and LRU storage |
+| `proxy.py` | JSON-line forwarding, cache key normalization, TTL and lock protection |
+| `client.py` | One-shot flags and interactive requests |
+| `tests/test_smoke.py` | Focused calculator and cache checks |
 
-The `gpt` branch is a placeholder response, even though the repository has optional dependency names. There is no live model call. The server cache is not synchronized across worker threads, and the wire format is a line-oriented lab protocol rather than an arbitrary-stream or hardened internet-facing proxy.
+The `gpt` request mode currently returns a stub message; it does not contact a model service. The server cache is process-local and is not synchronized between its worker threads. A client option that disables the server cache does not automatically bypass the proxy's separate cache. The protocol is intended for local inspection, not for exposing an internet-facing gateway.
